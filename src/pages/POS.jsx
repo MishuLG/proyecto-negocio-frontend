@@ -6,22 +6,48 @@ export default function POS() {
     const [carrito, setCarrito] = useState([]);
     const [turnoActivo, setTurnoActivo] = useState('Noche');
     const [tasas, setTasas] = useState({ COP: 1, BS: 1 });
+
+    const [cedula, setCedula] = useState('');
+    const [nombre, setNombre] = useState('');
+    const [pedidosAbiertos, setPedidosAbiertos] = useState([]);
+    const [pedidoSeleccionado, setPedidoSeleccionado] = useState('');
+
     const navigate = useNavigate();
     const rol = localStorage.getItem('rol');
 
     useEffect(() => {
-        fetch('http://localhost:3000/api/productos')
-            .then(res => res.json())
-            .then(data => setProductos(data));
-
-        fetch('http://localhost:3000/api/tasas')
-            .then(res => res.json())
-            .then(data => {
-                const cop = data.find(t => t.moneda === 'COP')?.tasa || 1;
-                const bs = data.find(t => t.moneda === 'BS')?.tasa || 1;
-                setTasas({ COP: parseFloat(cop), BS: parseFloat(bs) });
-            });
+        fetch('http://localhost:3000/api/productos').then(res => res.json()).then(data => setProductos(data));
+        fetch('http://localhost:3000/api/tasas').then(res => res.json()).then(data => {
+            const cop = data.find(t => t.moneda === 'COP')?.tasa || 1;
+            const bs = data.find(t => t.moneda === 'BS')?.tasa || 1;
+            setTasas({ COP: parseFloat(cop), BS: parseFloat(bs) });
+        });
+        cargarPedidosAbiertos();
     }, []);
+
+    const cargarPedidosAbiertos = () => {
+        fetch('http://localhost:3000/api/pedidos/abiertos').then(res => res.json()).then(data => setPedidosAbiertos(data));
+    };
+
+    const buscarCliente = async (valor) => {
+        setCedula(valor);
+        if (valor.length >= 6) {
+            const res = await fetch(`http://localhost:3000/api/clientes/cedula/${valor}`);
+            const data = await res.json();
+            if (data) setNombre(data.nombre);
+        }
+    };
+
+    const procesarVenta = async () => {
+        await fetch('http://localhost:3000/api/checkout', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cedula, nombre, turno: turnoActivo, carrito, pedido_id_existente: pedidoSeleccionado || null })
+        });
+
+        alert('¡Venta procesada con éxito!');
+        setCarrito([]); setCedula(''); setNombre(''); setPedidoSeleccionado('');
+        cargarPedidosAbiertos();
+    };
 
     const agregarAlTicket = (prod) => {
         setCarrito(prev => {
@@ -37,9 +63,11 @@ export default function POS() {
 
     const limpiarTicket = () => setCarrito([]);
 
-    const totalUSD = carrito.reduce((sum, item) => sum + (parseFloat(item.precio_venta_usd) * item.cantidad), 0);
-    const totalCOP = totalUSD * tasas.COP;
-    const totalBS = totalUSD * tasas.BS;
+    // LA MATEMÁTICA FRONTERIZA DEFINITIVA
+    const totalCOP = carrito.reduce((sum, item) => sum + (parseFloat(item.precio_venta_cop) * item.cantidad), 0);
+    const totalUSD = tasas.COP > 0 ? (totalCOP / tasas.COP) : 0;
+    const totalBS = tasas.BS > 0 ? (totalCOP / tasas.BS) : 0;
+
     const menuDelTurno = productos.filter(p => p.turno === turnoActivo || p.turno === 'Ambos');
 
     return (
@@ -66,15 +94,31 @@ export default function POS() {
                         {menuDelTurno.map((prod) => (
                             <button key={prod.id} onClick={() => agregarAlTicket(prod)} className="bg-white p-5 rounded-3xl text-left flex flex-col justify-between h-32 border border-slate-100 shadow-sm hover:shadow-md hover:-translate-y-1 active:scale-95 transition-all">
                                 <span className="font-bold text-slate-700 leading-tight">{prod.producto}</span>
-                                <span className="bg-slate-100 text-slate-600 text-sm font-black px-3 py-1 rounded-full w-fit">${parseFloat(prod.precio_venta_usd).toFixed(2)}</span>
+                                <span className="bg-slate-100 text-slate-600 text-sm font-black px-3 py-1 rounded-full w-fit">{parseFloat(prod.precio_venta_cop).toLocaleString('es-CO')}</span>
                             </button>
                         ))}
                     </div>
                 </div>
             </div>
 
-            <div className="w-[420px] bg-white border-l border-slate-100 shadow-2xl flex flex-col z-20">
-                <div className="px-8 py-6 border-b border-slate-100 bg-slate-900 text-white flex justify-between items-center">
+            <div className="w-[450px] bg-white border-l border-slate-100 shadow-2xl flex flex-col z-20">
+                <div className="p-6 border-b border-slate-200 bg-slate-50">
+                    <h3 className="text-sm font-bold text-slate-500 mb-3 uppercase tracking-wider">Detalles del Cliente</h3>
+                    <select value={pedidoSeleccionado} onChange={(e) => setPedidoSeleccionado(e.target.value)} className="w-full mb-3 px-4 py-2 rounded-xl border border-slate-300 outline-none bg-white">
+                        <option value="">🛒 Nuevo Pedido</option>
+                        {pedidosAbiertos.map(p => (
+                            <option key={p.id} value={p.id}>Sumar al Ticket #{p.id} - {p.nombre || 'Sin nombre'}</option>
+                        ))}
+                    </select>
+                    {!pedidoSeleccionado && (
+                        <div className="flex gap-2">
+                            <input type="text" placeholder="Cédula" value={cedula} onChange={(e) => buscarCliente(e.target.value)} className="w-1/3 px-4 py-2 rounded-xl border border-slate-300 outline-none" />
+                            <input type="text" placeholder="Nombre y Apellido" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-2/3 px-4 py-2 rounded-xl border border-slate-300 outline-none" />
+                        </div>
+                    )}
+                </div>
+
+                <div className="px-8 py-4 bg-slate-900 text-white flex justify-between items-center">
                     <h2 className="text-lg font-bold">🧾 Orden Actual</h2>
                     <button onClick={limpiarTicket} className="text-sm font-bold text-red-400 hover:text-red-300">Vaciar</button>
                 </div>
@@ -90,7 +134,7 @@ export default function POS() {
                                     <div className="flex-1 cursor-pointer" onClick={() => quitarDelTicket(item.id)}>
                                         <p className="font-bold text-slate-800 leading-tight hover:line-through hover:text-red-500">{item.producto}</p>
                                     </div>
-                                    <span className="font-bold text-slate-900">${(parseFloat(item.precio_venta_usd) * item.cantidad).toFixed(2)}</span>
+                                    <span className="font-bold text-slate-900">{(parseFloat(item.precio_venta_cop) * item.cantidad).toLocaleString('es-CO')}</span>
                                 </li>
                             ))}
                         </ul>
@@ -99,21 +143,21 @@ export default function POS() {
 
                 <div className="p-8 bg-slate-50 border-t border-slate-200">
                     <div className="space-y-2 mb-6">
-                        <div className="flex justify-between items-center text-slate-500 font-bold text-sm">
-                            <span>Total COP (Tasa: {tasas.COP})</span>
+                        <div className="flex justify-between items-center text-slate-800 font-black text-xl border-b pb-2">
+                            <span>TOTAL COP</span>
                             <span>{totalCOP.toLocaleString('es-CO')} COP</span>
                         </div>
-                        <div className="flex justify-between items-center text-slate-500 font-bold text-sm">
-                            <span>Total BS (Tasa: {tasas.BS})</span>
-                            <span>{totalBS.toLocaleString('es-VE')} BS</span>
+                        <div className="flex justify-between items-center text-slate-500 font-bold text-sm mt-2">
+                            <span>Equivalente USD (Tasa: {tasas.COP})</span>
+                            <span>${totalUSD.toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between items-end pt-3 border-t border-slate-200 mt-2">
-                            <span className="text-slate-800 font-black text-lg">TOTAL USD</span>
-                            <span className="text-4xl font-black text-green-600">${totalUSD.toFixed(2)}</span>
+                        <div className="flex justify-between items-center text-slate-500 font-bold text-sm">
+                            <span>Equivalente BS (Tasa: {tasas.BS})</span>
+                            <span>{totalBS.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                         </div>
                     </div>
-                    <button disabled={carrito.length === 0} className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-95 text-lg">
-                        💰 Procesar Venta
+                    <button onClick={procesarVenta} disabled={carrito.length === 0} className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-95 text-lg">
+                        {pedidoSeleccionado ? '➕ Sumar al Pedido' : '💰 Procesar Nueva Venta'}
                     </button>
                 </div>
             </div>

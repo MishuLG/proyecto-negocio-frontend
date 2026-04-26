@@ -25,7 +25,8 @@ export default function Login() {
                 setError(data.error || 'Credenciales incorrectas');
             }
         } catch (err) {
-            setError('Error conectando con el servidor');
+            console.error("🔥 ERROR EN LOGIN:", err.message); // <-- Esto nos dirá la verdad
+            res.status(500).send('Error en login');
         }
     };
 
