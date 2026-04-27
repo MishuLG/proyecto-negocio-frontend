@@ -1,10 +1,9 @@
 @import "tailwindcss";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* 🌙 MAGIA DE TAILWIND V4 PARA HABILITAR EL MODO OSCURO POR BOTÓN */
+@custom-variant dark (&:where(.dark, .dark *));
 
-/* Esta es la regla de seguridad que ya hizo que tu barra se pusiera negra */
+/* Fondo oscuro de seguridad */
 html.dark {
     background-color: #0f172a;
     color-scheme: dark;
