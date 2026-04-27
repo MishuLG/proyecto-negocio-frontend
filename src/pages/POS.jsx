@@ -7,12 +7,13 @@ export default function POS() {
     const [turnoActivo, setTurnoActivo] = useState('Noche');
     const [tasas, setTasas] = useState({ COP: 1, BS: 1 });
 
-    // Estados del Cliente y Fiados
     const [cedula, setCedula] = useState('');
     const [nombre, setNombre] = useState('');
     const [pedidosAbiertos, setPedidosAbiertos] = useState([]);
     const [pedidoSeleccionado, setPedidoSeleccionado] = useState('');
-    const [abono, setAbono] = useState(''); // <--- El nuevo estado para el dinero en mano
+    const [abono, setAbono] = useState('');
+
+    const [facturaActiva, setFacturaActiva] = useState(null);
 
     const navigate = useNavigate();
     const rol = localStorage.getItem('rol');
@@ -31,36 +32,71 @@ export default function POS() {
         fetch('http://localhost:3000/api/pedidos/abiertos').then(res => res.json()).then(data => setPedidosAbiertos(data));
     };
 
-    const buscarCliente = async (valor) => {
-        setCedula(valor);
-        if (valor.length >= 6) {
-            const res = await fetch(`http://localhost:3000/api/clientes/cedula/${valor}`);
-            const data = await res.json();
-            if (data) setNombre(data.nombre);
+    // ==========================================
+    // VALIDACIONES ESTRICTAS DE TEXTO
+    // ==========================================
+    const manejarCambioCedula = async (e) => {
+        // Reemplaza todo lo que NO sea un dígito (\D) por vacío
+        const valorLimpio = e.target.value.replace(/\D/g, '');
+        setCedula(valorLimpio);
+
+        // Si tiene 6 o más números, buscamos en la base de datos
+        if (valorLimpio.length >= 6) {
+            try {
+                const res = await fetch(`http://localhost:3000/api/clientes/cedula/${valorLimpio}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.nombre) {
+                        setNombre(data.nombre);
+                    }
+                }
+            } catch (error) {
+                console.error("Error buscando cliente", error);
+            }
         }
     };
 
+    const manejarCambioNombre = (e) => {
+        // Reemplaza todo lo que NO sea letra (mayúscula/minúscula, acentos, ñ) o espacio por vacío
+        const valorLimpio = e.target.value.replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g, '');
+        setNombre(valorLimpio);
+    };
+
+    // ==========================================
+    // PROCESAMIENTO
+    // ==========================================
     const procesarVenta = async () => {
+        if (!pedidoSeleccionado && (!cedula.trim() || !nombre.trim())) {
+            alert("⚠️ OBLIGATORIO: Debes ingresar la Cédula y el Nombre del cliente para registrar la venta.");
+            return;
+        }
+
         const respuesta = await fetch('http://localhost:3000/api/checkout', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                cedula,
-                nombre,
-                turno: turnoActivo,
-                carrito,
-                pedido_id_existente: pedidoSeleccionado || null,
-                abono
-            })
+            body: JSON.stringify({ cedula, nombre, turno: turnoActivo, carrito, pedido_id_existente: pedidoSeleccionado || null, abono })
         });
 
         const data = await respuesta.json();
 
         if (!respuesta.ok) {
             alert("⚠️ " + (data.error || "Error al procesar la venta"));
-            return; // Detiene la caja si intenta fiar sin cédula
+            return;
         }
 
-        alert('¡' + data.mensaje + '!');
+        const pagoAbonado = abono ? parseFloat(abono) : totalCOP;
+        const deudaRestante = totalCOP - pagoAbonado;
+
+        setFacturaActiva({
+            ticket_id: data.pedido_id || 'N/A',
+            fecha: new Date().toLocaleString('es-VE'),
+            cliente: nombre || 'Cliente de Pedido Abierto',
+            ci: cedula || '-',
+            items: [...carrito],
+            totalCOP: totalCOP,
+            abono: pagoAbonado,
+            deuda: deudaRestante > 0 ? deudaRestante : 0
+        });
+
         setCarrito([]); setCedula(''); setNombre(''); setPedidoSeleccionado(''); setAbono('');
         cargarPedidosAbiertos();
     };
@@ -79,7 +115,6 @@ export default function POS() {
 
     const limpiarTicket = () => setCarrito([]);
 
-    // MATEMÁTICA FRONTERIZA DEFINITIVA
     const totalCOP = carrito.reduce((sum, item) => sum + (parseFloat(item.precio_venta_cop) * item.cantidad), 0);
     const totalUSD = tasas.COP > 0 ? (totalCOP / tasas.COP) : 0;
     const totalBS = tasas.BS > 0 ? (totalCOP / tasas.BS) : 0;
@@ -88,6 +123,15 @@ export default function POS() {
 
     return (
         <div className="flex h-screen bg-slate-50 font-sans text-slate-800">
+
+            <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #zona-impresion, #zona-impresion * { visibility: visible; }
+          #zona-impresion { position: absolute; left: 0; top: 0; width: 300px; padding: 10px; margin: 0; }
+        }
+      `}</style>
+
             <div className="flex-1 flex flex-col h-full overflow-hidden">
                 <div className="bg-white/90 backdrop-blur-md px-8 py-5 flex justify-between items-center shadow-sm z-10 border-b border-slate-200">
                     <div>
@@ -120,23 +164,37 @@ export default function POS() {
             <div className="w-[450px] bg-white border-l border-slate-100 shadow-2xl flex flex-col z-20">
                 <div className="p-6 border-b border-slate-200 bg-slate-50">
                     <h3 className="text-sm font-bold text-slate-500 mb-3 uppercase tracking-wider">Detalles del Cliente</h3>
-                    <select value={pedidoSeleccionado} onChange={(e) => setPedidoSeleccionado(e.target.value)} className="w-full mb-3 px-4 py-2 rounded-xl border border-slate-300 outline-none bg-white">
-                        <option value="">🛒 Nuevo Pedido</option>
+
+                    <select value={pedidoSeleccionado} onChange={(e) => setPedidoSeleccionado(e.target.value)} className="w-full mb-3 px-4 py-2 rounded-xl border border-slate-300 outline-none bg-white font-bold text-slate-700">
+                        <option value="">🛒 Nuevo Pedido (Mesa Nueva)</option>
                         {pedidosAbiertos.map(p => (
-                            <option key={p.id} value={p.id}>Sumar al Ticket #{p.id} - {p.nombre || 'Sin nombre'}</option>
+                            <option key={p.id} value={p.id}>➕ Sumar al Ticket #{p.id} - {p.nombre || 'Sin nombre'}</option>
                         ))}
                     </select>
+
                     {!pedidoSeleccionado && (
                         <div className="flex gap-2">
-                            <input type="text" placeholder="Cédula" value={cedula} onChange={(e) => buscarCliente(e.target.value)} className="w-1/3 px-4 py-2 rounded-xl border border-slate-300 outline-none" />
-                            <input type="text" placeholder="Nombre y Apellido" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-2/3 px-4 py-2 rounded-xl border border-slate-300 outline-none" />
+                            <input
+                                type="text"
+                                placeholder="Cédula (Obligatorio)"
+                                value={cedula}
+                                onChange={manejarCambioCedula}
+                                className="w-1/3 px-4 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 transition-all font-bold"
+                            />
+                            <input
+                                type="text"
+                                placeholder="Nombre y Apellido (Obligatorio)"
+                                value={nombre}
+                                onChange={manejarCambioNombre}
+                                className="w-2/3 px-4 py-2 rounded-xl border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500 transition-all font-bold"
+                            />
                         </div>
                     )}
                 </div>
 
                 <div className="px-8 py-4 bg-slate-900 text-white flex justify-between items-center">
                     <h2 className="text-lg font-bold">🧾 Orden Actual</h2>
-                    <button onClick={limpiarTicket} className="text-sm font-bold text-red-400 hover:text-red-300">Vaciar</button>
+                    <button onClick={limpiarTicket} className="text-sm font-bold text-red-400 hover:text-red-300 transition-colors">Vaciar</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8">
@@ -148,7 +206,7 @@ export default function POS() {
                                 <li key={index} className="flex gap-4 items-start">
                                     <div className="bg-slate-100 text-slate-700 font-bold px-3 py-1 rounded-lg text-sm mt-1">x{item.cantidad}</div>
                                     <div className="flex-1 cursor-pointer" onClick={() => quitarDelTicket(item.id)}>
-                                        <p className="font-bold text-slate-800 leading-tight hover:line-through hover:text-red-500">{item.producto}</p>
+                                        <p className="font-bold text-slate-800 leading-tight hover:line-through hover:text-red-500 transition-colors">{item.producto}</p>
                                     </div>
                                     <span className="font-bold text-slate-900">{(parseFloat(item.precio_venta_cop) * item.cantidad).toLocaleString('es-CO')}</span>
                                 </li>
@@ -158,17 +216,9 @@ export default function POS() {
                 </div>
 
                 <div className="p-8 bg-slate-50 border-t border-slate-200">
-
-                    {/* Módulo de Abono (Dinero entregado) */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 shadow-sm">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Abono Inicial (COP)</label>
-                        <input
-                            type="number"
-                            placeholder={`Ej: ${totalCOP} (Dejar vacío si paga completo)`}
-                            value={abono}
-                            onChange={(e) => setAbono(e.target.value)}
-                            className="w-full px-4 py-2 rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-slate-800 transition-all font-bold text-slate-700"
-                        />
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 shadow-sm focus-within:ring-2 focus-within:ring-slate-800 transition-all">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Abono Entregado (COP)</label>
+                        <input type="number" placeholder={`Ej: ${totalCOP} (Dejar vacío si paga completo)`} value={abono} onChange={(e) => setAbono(e.target.value)} className="w-full outline-none font-black text-xl text-slate-800 bg-transparent placeholder-slate-300" />
                     </div>
 
                     <div className="space-y-2 mb-6">
@@ -177,20 +227,85 @@ export default function POS() {
                             <span>{totalCOP.toLocaleString('es-CO')} COP</span>
                         </div>
                         <div className="flex justify-between items-center text-slate-500 font-bold text-sm mt-2">
-                            <span>Equivalente USD (Tasa: {tasas.COP})</span>
+                            <span>USD (Tasa: {tasas.COP})</span>
                             <span>${totalUSD.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between items-center text-slate-500 font-bold text-sm">
-                            <span>Equivalente BS (Tasa: {tasas.BS})</span>
+                            <span>BS (Tasa Frontera: {tasas.BS})</span>
                             <span>{totalBS.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                         </div>
                     </div>
 
                     <button onClick={procesarVenta} disabled={carrito.length === 0} className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-95 text-lg">
-                        {pedidoSeleccionado ? '➕ Sumar al Pedido' : '💰 Procesar Nueva Venta'}
+                        {pedidoSeleccionado ? '➕ Sumar al Pedido' : '💰 Cobrar y Generar Factura'}
                     </button>
                 </div>
             </div>
+
+            {facturaActiva && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col w-[380px] max-h-[90vh]">
+
+                        <div className="bg-slate-100 p-4 border-b border-slate-200 flex justify-between items-center">
+                            <h3 className="font-bold text-slate-800">Vista Previa de Factura</h3>
+                            <button onClick={() => setFacturaActiva(null)} className="text-slate-400 hover:text-red-500 font-bold">✕ Cerrar</button>
+                        </div>
+
+                        <div id="zona-impresion" className="p-8 overflow-y-auto bg-white text-black font-mono text-sm">
+                            <div className="text-center mb-6">
+                                <h2 className="font-black text-2xl tracking-tighter">L&L BURGERS</h2>
+                                <p className="text-xs mt-1">San Cristóbal, Táchira</p>
+                                <p className="text-xs">--------------------------------</p>
+                                <p className="font-bold mt-2">TICKET #{facturaActiva.ticket_id}</p>
+                                <p className="text-xs">{facturaActiva.fecha}</p>
+                            </div>
+
+                            <div className="mb-4">
+                                <p><span className="font-bold">CLIENTE:</span> {facturaActiva.cliente}</p>
+                                <p><span className="font-bold">C.I:</span> {facturaActiva.ci}</p>
+                            </div>
+
+                            <div className="border-t border-b border-dashed border-black py-2 mb-4 space-y-2">
+                                {facturaActiva.items.map((item, i) => (
+                                    <div key={i} className="flex justify-between items-start gap-2">
+                                        <span className="flex-1">{item.cantidad}x {item.producto}</span>
+                                        <span className="font-bold">{(item.precio_venta_cop * item.cantidad).toLocaleString()}</span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="space-y-1 mb-6">
+                                <div className="flex justify-between items-end">
+                                    <span className="font-bold text-lg">TOTAL A PAGAR:</span>
+                                    <span className="font-black text-xl">{facturaActiva.totalCOP.toLocaleString()} COP</span>
+                                </div>
+                                <div className="flex justify-between items-center text-xs">
+                                    <span>Su Abono:</span>
+                                    <span>{facturaActiva.abono.toLocaleString()} COP</span>
+                                </div>
+                                {facturaActiva.deuda > 0 && (
+                                    <div className="flex justify-between items-center font-bold mt-2 pt-2 border-t border-black">
+                                        <span>SALDO PENDIENTE (FIADO):</span>
+                                        <span>{facturaActiva.deuda.toLocaleString()} COP</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="text-center text-xs mt-8">
+                                <p>¡Gracias por su compra!</p>
+                                <p>Vuelva pronto</p>
+                            </div>
+                        </div>
+
+                        <div className="p-4 bg-slate-50 border-t border-slate-200 flex gap-3">
+                            <button onClick={() => window.print()} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold shadow-md transition-all flex justify-center items-center gap-2">
+                                🖨️ Imprimir Ticket
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }
