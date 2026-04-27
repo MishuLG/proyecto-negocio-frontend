@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Esta es la regla de seguridad que ya hizo que tu barra se pusiera negra */
+html.dark {
+    background-color: #0f172a;
+    color-scheme: dark;
+}
