@@ -12,6 +12,10 @@ export default function Dashboard() {
     const [editandoId, setEditandoId] = useState(null);
     const [datosEdicion, setDatosEdicion] = useState({ nombre: '', precio_cop: '', categoria_id: 1 });
 
+    // Estados de Control de Fiados
+    const [deudores, setDeudores] = useState([]);
+    const [totalCalle, setTotalCalle] = useState(0);
+
     const cargarDatos = () => {
         fetch('http://localhost:3000/api/tasas').then(res => res.json()).then(data => {
             const cop = data.find(t => t.moneda === 'COP');
@@ -21,6 +25,14 @@ export default function Dashboard() {
         });
         fetch('http://localhost:3000/api/dashboard/ventas-hoy').then(res => res.json()).then(data => setVentasHoy(data));
         fetch('http://localhost:3000/api/productos').then(res => res.json()).then(data => setProductos(data));
+
+        // Cargar clientes con cuentas por cobrar
+        fetch('http://localhost:3000/api/clientes/deudores')
+            .then(res => res.json())
+            .then(data => {
+                setDeudores(data.clientes || []);
+                setTotalCalle(data.total_dinero_en_calle_cop || 0);
+            });
     };
 
     useEffect(() => { cargarDatos(); }, []);
@@ -155,7 +167,7 @@ export default function Dashboard() {
                 </div>
             </div>
 
-            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200">
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 mb-8">
                 <h2 className="text-xl font-bold mb-6 text-slate-800">📋 Pedidos del Día</h2>
                 <table className="w-full text-left">
                     <thead>
@@ -184,6 +196,39 @@ export default function Dashboard() {
                     </tbody>
                 </table>
             </div>
+
+            {/* MÓDULO DE CONTROL DE FIADOS (NUEVO) */}
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 border-l-4 border-l-amber-500">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-slate-800">⚠️ Control de Fiados (Cuentas por Cobrar)</h2>
+                    <span className="font-black text-red-500 text-lg bg-red-50 px-4 py-2 rounded-lg">
+                        Total en Calle: {parseFloat(totalCalle).toLocaleString('es-CO')} COP
+                    </span>
+                </div>
+                <table className="w-full text-left">
+                    <thead>
+                        <tr className="bg-slate-100 text-slate-600">
+                            <th className="p-4 rounded-l-xl">Cliente</th>
+                            <th className="p-4">Cédula</th>
+                            <th className="p-4 rounded-r-xl">Monto Adeudado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {deudores.length === 0 ? (
+                            <tr><td colSpan="3" className="p-4 text-center text-slate-500 font-medium">No hay deudas pendientes 🎉</td></tr>
+                        ) : (
+                            deudores.map(deudor => (
+                                <tr key={deudor.id} className="border-b border-slate-50 hover:bg-red-50 transition-colors">
+                                    <td className="p-4 font-bold text-slate-800">{deudor.nombre}</td>
+                                    <td className="p-4 text-slate-600">{deudor.cedula}</td>
+                                    <td className="p-4 font-black text-red-600">{parseFloat(deudor.deuda_total).toLocaleString('es-CO')} COP</td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
         </div>
     );
 }

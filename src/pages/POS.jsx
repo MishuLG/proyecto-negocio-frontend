@@ -7,10 +7,12 @@ export default function POS() {
     const [turnoActivo, setTurnoActivo] = useState('Noche');
     const [tasas, setTasas] = useState({ COP: 1, BS: 1 });
 
+    // Estados del Cliente y Fiados
     const [cedula, setCedula] = useState('');
     const [nombre, setNombre] = useState('');
     const [pedidosAbiertos, setPedidosAbiertos] = useState([]);
     const [pedidoSeleccionado, setPedidoSeleccionado] = useState('');
+    const [abono, setAbono] = useState(''); // <--- El nuevo estado para el dinero en mano
 
     const navigate = useNavigate();
     const rol = localStorage.getItem('rol');
@@ -39,13 +41,27 @@ export default function POS() {
     };
 
     const procesarVenta = async () => {
-        await fetch('http://localhost:3000/api/checkout', {
+        const respuesta = await fetch('http://localhost:3000/api/checkout', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cedula, nombre, turno: turnoActivo, carrito, pedido_id_existente: pedidoSeleccionado || null })
+            body: JSON.stringify({
+                cedula,
+                nombre,
+                turno: turnoActivo,
+                carrito,
+                pedido_id_existente: pedidoSeleccionado || null,
+                abono
+            })
         });
 
-        alert('¡Venta procesada con éxito!');
-        setCarrito([]); setCedula(''); setNombre(''); setPedidoSeleccionado('');
+        const data = await respuesta.json();
+
+        if (!respuesta.ok) {
+            alert("⚠️ " + (data.error || "Error al procesar la venta"));
+            return; // Detiene la caja si intenta fiar sin cédula
+        }
+
+        alert('¡' + data.mensaje + '!');
+        setCarrito([]); setCedula(''); setNombre(''); setPedidoSeleccionado(''); setAbono('');
         cargarPedidosAbiertos();
     };
 
@@ -63,7 +79,7 @@ export default function POS() {
 
     const limpiarTicket = () => setCarrito([]);
 
-    // LA MATEMÁTICA FRONTERIZA DEFINITIVA
+    // MATEMÁTICA FRONTERIZA DEFINITIVA
     const totalCOP = carrito.reduce((sum, item) => sum + (parseFloat(item.precio_venta_cop) * item.cantidad), 0);
     const totalUSD = tasas.COP > 0 ? (totalCOP / tasas.COP) : 0;
     const totalBS = tasas.BS > 0 ? (totalCOP / tasas.BS) : 0;
@@ -142,6 +158,19 @@ export default function POS() {
                 </div>
 
                 <div className="p-8 bg-slate-50 border-t border-slate-200">
+
+                    {/* Módulo de Abono (Dinero entregado) */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 mb-6 shadow-sm">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Abono Inicial (COP)</label>
+                        <input
+                            type="number"
+                            placeholder={`Ej: ${totalCOP} (Dejar vacío si paga completo)`}
+                            value={abono}
+                            onChange={(e) => setAbono(e.target.value)}
+                            className="w-full px-4 py-2 rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-slate-800 transition-all font-bold text-slate-700"
+                        />
+                    </div>
+
                     <div className="space-y-2 mb-6">
                         <div className="flex justify-between items-center text-slate-800 font-black text-xl border-b pb-2">
                             <span>TOTAL COP</span>
@@ -156,6 +185,7 @@ export default function POS() {
                             <span>{totalBS.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} BS</span>
                         </div>
                     </div>
+
                     <button onClick={procesarVenta} disabled={carrito.length === 0} className="w-full bg-slate-900 hover:bg-black disabled:bg-slate-300 text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-95 text-lg">
                         {pedidoSeleccionado ? '➕ Sumar al Pedido' : '💰 Procesar Nueva Venta'}
                     </button>
