@@ -151,7 +151,7 @@ export default function Dashboard() {
                 className="p-10 bg-slate-50 dark:bg-slate-900 min-h-screen font-sans text-slate-800 dark:text-slate-100 transition-colors duration-300"
             >
 
-                {/* HEADER ANIMADO */}
+                {/* HEADER ANIMADO (CON EL NUEVO BOTÓN DE GASTOS) */}
                 <motion.div
                     initial={{ y: -20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -163,6 +163,12 @@ export default function Dashboard() {
                         <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setIsDark(!isDark)} className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-white px-4 py-3 rounded-xl font-bold transition-colors">
                             {isDark ? '☀️ Claro' : '🌙 Oscuro'}
                         </motion.button>
+
+                        {/* NUEVO BOTÓN HACIA GASTOS */}
+                        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                            <Link to="/gastos" className="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-xl font-bold shadow-md transition-colors block">📉 Control de Gastos</Link>
+                        </motion.div>
+
                         <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                             <Link to="/pos" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-md transition-colors block">Ir a la Caja (POS)</Link>
                         </motion.div>
