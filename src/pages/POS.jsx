@@ -2,7 +2,52 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// --- PLANTILLAS DE ENSAMBLAJE L&L BURGERS ---
+const menuPlantillas = {
+    hamburguesa: {
+        ingredientes: [
+            { id: 'pan', nombre: 'Pan', icono: '🍞' },
+            { id: 'lechuga', nombre: 'Lechuga', icono: '🥬' },
+            { id: 'tomate', nombre: 'Tomate', icono: '🍅' },
+            { id: 'cebolla', nombre: 'Cebolla', icono: '🧅' },
+            { id: 'queso', nombre: 'Queso', icono: '🧀' },
+            { id: 'huevo', nombre: 'Huevo', icono: '🍳' },
+            { id: 'tocineta', nombre: 'Tocineta', icono: '🥓' },
+            { id: 'salsas', nombre: 'Salsas', icono: '🥫' }
+        ],
+        opcionesProteina: ['Carne Molida', 'Carne Mechada', 'Pollo Milanesa', 'Pollo Mechado', 'Lomo de Cerdo', 'Chorizo']
+    },
+    perro: {
+        ingredientes: [
+            { id: 'pan', nombre: 'Pan de Perro', icono: '🌭' },
+            { id: 'salchicha', nombre: 'Salchicha', icono: '🌭' },
+            { id: 'cebolla', nombre: 'Cebolla Picada', icono: '🧅' },
+            { id: 'papitas', nombre: 'Papas Fritas', icono: '🍟' },
+            { id: 'queso', nombre: 'Queso Rallado', icono: '🧀' },
+            { id: 'salsas', nombre: 'Salsas', icono: '🥫' }
+        ],
+        opcionesProteina: []
+    },
+    salchipapa: {
+        ingredientes: [
+            { id: 'papas', nombre: 'Papas Fritas', icono: '🍟' },
+            { id: 'salchicha', nombre: 'Salchicha Picada', icono: '🌭' },
+            { id: 'queso', nombre: 'Queso', icono: '🧀' },
+            { id: 'salsas', nombre: 'Salsas', icono: '🥫' }
+        ],
+        opcionesProteina: []
+    }
+};
+
+const extrasComunes = [
+    { id: 'ext_tocineta', nombre: '+ Tocineta', precio: 1500, icono: '🥓' },
+    { id: 'ext_queso', nombre: '+ Queso', precio: 1000, icono: '🧀' },
+    { id: 'ext_huevo', nombre: '+ Huevo', precio: 1000, icono: '🍳' },
+    { id: 'ext_proteina', nombre: '+ Proteína Extra', precio: 4000, icono: '🥩' }
+];
+
 export default function POS() {
+    // ESTADOS ORIGINALES
     const [productos, setProductos] = useState([]);
     const [carrito, setCarrito] = useState([]);
     const [turnoActivo, setTurnoActivo] = useState('Noche');
@@ -16,6 +61,13 @@ export default function POS() {
 
     const [facturaActiva, setFacturaActiva] = useState(null);
     const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') === 'dark');
+
+    // ESTADOS DEL MODAL DE ENSAMBLAJE
+    const [itemPersonalizando, setItemPersonalizando] = useState(null);
+    const [ingredientesDescartados, setIngredientesDescartados] = useState([]);
+    const [proteinasSeleccionadas, setProteinasSeleccionadas] = useState([]);
+    const [cantidadProteinasRequeridas, setCantidadProteinasRequeridas] = useState(0);
+    const [extrasSeleccionados, setExtrasSeleccionados] = useState([]);
 
     const navigate = useNavigate();
     const rol = localStorage.getItem('rol');
@@ -73,6 +125,7 @@ export default function POS() {
             return;
         }
 
+        // TUS VALIDACIONES ORIGINALES INTACTAS
         if (abono !== '') {
             const valorAbono = parseFloat(abono);
             if (valorAbono < 0) {
@@ -115,16 +168,110 @@ export default function POS() {
         cargarPedidosAbiertos();
     };
 
-    const agregarAlTicket = (prod) => {
+    // --- LÓGICA DE ENSAMBLAJE ---
+    const iniciarPersonalizacion = (prod) => {
+        const nombreLower = (prod.producto || prod.nombre || '').toLowerCase();
+
+        let tipoPlantilla = null;
+        if (nombreLower.includes('salchipapa')) tipoPlantilla = 'salchipapa';
+        else if (nombreLower.includes('perro') || nombreLower.includes('salchicha')) tipoPlantilla = 'perro';
+        else if (nombreLower.includes('hamburguesa') || nombreLower.includes('burger')) tipoPlantilla = 'hamburguesa';
+
+        if (tipoPlantilla) {
+            let requiereProteinas = 0;
+            if (tipoPlantilla === 'hamburguesa') {
+                if (nombreLower.includes('triple')) requiereProteinas = 3;
+                else if (nombreLower.includes('doble')) requiereProteinas = 2;
+                else requiereProteinas = 1;
+            }
+
+            setCantidadProteinasRequeridas(requiereProteinas);
+            setIngredientesDescartados([]);
+            setProteinasSeleccionadas([]);
+            setExtrasSeleccionados([]);
+            setItemPersonalizando({ ...prod, plantilla: menuPlantillas[tipoPlantilla] });
+        } else {
+            agregarAlTicketDirecto(prod);
+        }
+    };
+
+    const toggleIngrediente = (id) => {
+        if (ingredientesDescartados.includes(id)) setIngredientesDescartados(ingredientesDescartados.filter(item => item !== id));
+        else setIngredientesDescartados([...ingredientesDescartados, id]);
+    };
+
+    const seleccionarProteina = (proteina) => {
+        if (proteinasSeleccionadas.length < cantidadProteinasRequeridas) {
+            setProteinasSeleccionadas([...proteinasSeleccionadas, proteina]);
+        } else {
+            const nuevas = [...proteinasSeleccionadas];
+            nuevas[nuevas.length - 1] = proteina;
+            setProteinasSeleccionadas(nuevas);
+        }
+    };
+
+    const quitarProteina = (index) => {
+        setProteinasSeleccionadas(proteinasSeleccionadas.filter((_, i) => i !== index));
+    };
+
+    const toggleExtra = (extra) => {
+        const existeIndex = extrasSeleccionados.findIndex(e => e.id === extra.id);
+        if (existeIndex >= 0) {
+            setExtrasSeleccionados(extrasSeleccionados.filter((_, i) => i !== existeIndex));
+        } else {
+            setExtrasSeleccionados([...extrasSeleccionados, extra]);
+        }
+    };
+
+    const confirmarProducto = () => {
+        if (cantidadProteinasRequeridas > 0 && proteinasSeleccionadas.length < cantidadProteinasRequeridas) {
+            alert(`⚠️ Falta seleccionar ${cantidadProteinasRequeridas - proteinasSeleccionadas.length} proteína(s).`);
+            return;
+        }
+
+        let notasExtras = '';
+        if (proteinasSeleccionadas.length > 0) notasExtras += `[${proteinasSeleccionadas.join(' + ')}] `;
+
+        if (ingredientesDescartados.length > 0) {
+            const nombresDescartados = ingredientesDescartados.map(id => {
+                const ing = itemPersonalizando.plantilla.ingredientes.find(i => i.id === id);
+                return ing ? ing.nombre : id;
+            });
+            notasExtras += `| 🚫 SIN: ${nombresDescartados.join(', ')} `;
+        }
+
+        let precioFinal = parseFloat(itemPersonalizando.precio_venta_cop);
+        if (extrasSeleccionados.length > 0) {
+            const nombresExtras = extrasSeleccionados.map(e => {
+                precioFinal += e.precio;
+                return e.nombre;
+            });
+            notasExtras += `| ➕ EXTRAS: ${nombresExtras.join(', ')}`;
+        }
+
+        const productoParaCarrito = {
+            ...itemPersonalizando,
+            id_carrito: Date.now() + Math.random(), // ID único para el carrito
+            precio_venta_cop: precioFinal,
+            nota_ensamblaje: notasExtras.trim(),
+            cantidad: 1
+        };
+
+        setCarrito([...carrito, productoParaCarrito]);
+        setItemPersonalizando(null);
+    };
+
+    // FUNCIÓN ORIGINAL ADAPTADA PARA PRODUCTOS NORMALES
+    const agregarAlTicketDirecto = (prod) => {
         setCarrito(prev => {
-            const existe = prev.find(item => item.id === prod.id);
-            if (existe) return prev.map(item => item.id === prod.id ? { ...item, cantidad: item.cantidad + 1 } : item);
-            return [...prev, { ...prod, cantidad: 1 }];
+            const existe = prev.find(item => item.id === prod.id && !item.nota_ensamblaje);
+            if (existe) return prev.map(item => item.id === prod.id && !item.nota_ensamblaje ? { ...item, cantidad: item.cantidad + 1 } : item);
+            return [...prev, { ...prod, id_carrito: Date.now() + Math.random(), cantidad: 1 }];
         });
     };
 
-    const quitarDelTicket = (id) => {
-        setCarrito(prev => prev.map(item => item.id === id ? { ...item, cantidad: item.cantidad - 1 } : item).filter(item => item.cantidad > 0));
+    const quitarDelTicket = (id_carrito) => {
+        setCarrito(prev => prev.map(item => item.id_carrito === id_carrito ? { ...item, cantidad: item.cantidad - 1 } : item).filter(item => item.cantidad > 0));
     };
 
     const limpiarTicket = () => setCarrito([]);
@@ -194,7 +341,7 @@ export default function POS() {
                                         transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
                                         whileHover={{ scale: 1.03, y: -5 }}
                                         whileTap={{ scale: 0.95 }}
-                                        onClick={() => agregarAlTicket(prod)}
+                                        onClick={() => iniciarPersonalizacion(prod)}
                                         className="bg-white dark:bg-slate-800 p-5 rounded-3xl text-left flex flex-col justify-between h-32 border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-xl transition-shadow"
                                     >
                                         <span className="font-bold text-slate-700 dark:text-slate-200 leading-tight">{prod.producto}</span>
@@ -255,20 +402,27 @@ export default function POS() {
                         ) : (
                             <ul className="space-y-5">
                                 <AnimatePresence>
-                                    {carrito.map((item, index) => (
+                                    {carrito.map((item) => (
                                         <motion.li
-                                            key={item.id}
+                                            key={item.id_carrito}
                                             initial={{ opacity: 0, x: -20 }}
                                             animate={{ opacity: 1, x: 0 }}
                                             exit={{ opacity: 0, x: 20, scale: 0.9 }}
                                             layout
-                                            className="flex gap-4 items-start"
+                                            className="flex flex-col gap-1 border-b border-slate-100 dark:border-slate-700 pb-3"
                                         >
-                                            <div className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold px-3 py-1 rounded-lg text-sm mt-1 transition-colors">x{item.cantidad}</div>
-                                            <div className="flex-1 cursor-pointer" onClick={() => quitarDelTicket(item.id)}>
-                                                <p className="font-bold text-slate-800 dark:text-slate-100 leading-tight hover:line-through hover:text-red-500 transition-colors">{item.producto}</p>
+                                            <div className="flex gap-4 items-start">
+                                                <div className="bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold px-3 py-1 rounded-lg text-sm mt-1 transition-colors">x{item.cantidad}</div>
+                                                <div className="flex-1 cursor-pointer" onClick={() => quitarDelTicket(item.id_carrito)}>
+                                                    <p className="font-bold text-slate-800 dark:text-slate-100 leading-tight hover:line-through hover:text-red-500 transition-colors">{item.producto}</p>
+                                                </div>
+                                                <span className="font-bold text-slate-900 dark:text-white">{(parseFloat(item.precio_venta_cop) * item.cantidad).toLocaleString('es-CO')}</span>
                                             </div>
-                                            <span className="font-bold text-slate-900 dark:text-white">{(parseFloat(item.precio_venta_cop) * item.cantidad).toLocaleString('es-CO')}</span>
+                                            {item.nota_ensamblaje && (
+                                                <div className="pl-14 text-xs font-bold text-amber-600 dark:text-amber-400 leading-tight">
+                                                    {item.nota_ensamblaje}
+                                                </div>
+                                            )}
                                         </motion.li>
                                     ))}
                                 </AnimatePresence>
@@ -309,7 +463,110 @@ export default function POS() {
                     </div>
                 </motion.div>
 
-                {/* MODAL DE FACTURA ANIMADO */}
+                {/* ========================================= */}
+                {/* MODAL DE ENSAMBLAJE INTELIGENTE */}
+                {/* ========================================= */}
+                <AnimatePresence>
+                    {itemPersonalizando && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setItemPersonalizando(null)}></motion.div>
+
+                            <motion.div initial={{ scale: 0.9, y: 50, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.9, y: 20, opacity: 0 }} className="relative bg-white dark:bg-slate-800 w-full max-w-4xl rounded-[2rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-slate-900 p-6 text-center relative">
+                                    <button onClick={() => setItemPersonalizando(null)} className="absolute top-4 right-4 bg-white/20 text-white w-8 h-8 rounded-full font-bold hover:bg-red-500 transition-colors">✕</button>
+                                    <h2 className="text-3xl font-black text-white">{itemPersonalizando.producto}</h2>
+                                </div>
+
+                                <div className="p-8 overflow-y-auto flex-1 bg-slate-50 dark:bg-slate-900/50">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+                                        {/* COLUMNA 1: CARNES Y EXCLUSIÓN */}
+                                        <div>
+                                            {cantidadProteinasRequeridas > 0 && (
+                                                <div className="mb-8 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+                                                    <div className="flex justify-between items-center mb-4">
+                                                        <h3 className="text-lg font-black text-slate-800 dark:text-white">🥩 Elige {cantidadProteinasRequeridas} Proteína(s)</h3>
+                                                        <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold">Requiere: {proteinasSeleccionadas.length}/{cantidadProteinasRequeridas}</span>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 gap-2 mb-4">
+                                                        {itemPersonalizando.plantilla.opcionesProteina.map(prot => (
+                                                            <motion.button key={prot} whileTap={{ scale: 0.9 }} onClick={() => seleccionarProteina(prot)} className="bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-white font-bold py-2 px-2 rounded-xl text-xs text-center border border-slate-200 dark:border-slate-600 transition-colors">
+                                                                + {prot}
+                                                            </motion.button>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {proteinasSeleccionadas.map((prot, index) => (
+                                                            <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} key={index} onClick={() => quitarProteina(index)} className="bg-green-100 border border-green-400 text-green-700 px-3 py-1 rounded-lg font-bold flex items-center gap-2 cursor-pointer hover:bg-red-100 hover:text-red-600 hover:border-red-400 text-sm">
+                                                                🥩 {prot} <span>✕</span>
+                                                            </motion.span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700">
+                                                <h3 className="text-lg font-black text-slate-800 dark:text-white mb-4">🥬 Descartar Ingredientes</h3>
+                                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                                                    {itemPersonalizando.plantilla.ingredientes.map(ing => {
+                                                        const estaDescartado = ingredientesDescartados.includes(ing.id);
+                                                        return (
+                                                            <motion.button key={ing.id} whileTap={{ scale: 0.9 }} onClick={() => toggleIngrediente(ing.id)} className={`relative p-3 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${estaDescartado ? 'bg-red-50 border-red-300 opacity-60' : 'bg-white dark:bg-slate-700 border-slate-100 dark:border-slate-600 shadow-sm'}`}>
+                                                                {estaDescartado && (
+                                                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                                                        <div className="w-full h-1 bg-red-500 rotate-45 rounded-full absolute"></div>
+                                                                        <div className="w-full h-1 bg-red-500 -rotate-45 rounded-full absolute"></div>
+                                                                    </div>
+                                                                )}
+                                                                <span className="text-3xl mb-1">{ing.icono}</span>
+                                                                <span className={`text-[10px] font-bold text-center leading-tight ${estaDescartado ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>{ing.nombre}</span>
+                                                            </motion.button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* COLUMNA 2: EXTRAS */}
+                                        <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 h-fit">
+                                            <h3 className="text-lg font-black text-slate-800 dark:text-white mb-4">➕ Agregar Extras</h3>
+                                            <div className="flex flex-col gap-3">
+                                                {extrasComunes.map(extra => {
+                                                    const estaSeleccionado = extrasSeleccionados.find(e => e.id === extra.id);
+                                                    return (
+                                                        <motion.button key={extra.id} whileTap={{ scale: 0.98 }} onClick={() => toggleExtra(extra)} className={`flex justify-between items-center p-4 rounded-xl border-2 transition-all ${estaSeleccionado ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:border-blue-300'}`}>
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="text-2xl">{extra.icono}</span>
+                                                                <span className={`font-bold ${estaSeleccionado ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-300'}`}>{extra.nombre}</span>
+                                                            </div>
+                                                            <span className="font-black text-green-600 dark:text-green-400">+{extra.precio.toLocaleString('es-CO')}</span>
+                                                        </motion.button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white dark:bg-slate-800 p-6 border-t border-slate-200 dark:border-slate-700 flex gap-4 items-center">
+                                    <div className="flex-1">
+                                        <p className="text-sm font-bold text-slate-500">Precio Final Estimado:</p>
+                                        <p className="text-2xl font-black text-green-600">
+                                            {(parseFloat(itemPersonalizando.precio_venta_cop) + extrasSeleccionados.reduce((sum, e) => sum + e.precio, 0)).toLocaleString('es-CO')} COP
+                                        </p>
+                                    </div>
+                                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={confirmarProducto} className="w-1/2 bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl text-xl shadow-lg">
+                                        ✓ Confirmar y Agregar
+                                    </motion.button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
+
+                {/* MODAL DE FACTURA ORIGINAL (Con soporte para notas) */}
                 <AnimatePresence>
                     {facturaActiva && (
                         <motion.div
@@ -346,9 +603,17 @@ export default function POS() {
 
                                     <div className="border-t border-b border-dashed border-black py-2 mb-4 space-y-2">
                                         {facturaActiva.items.map((item, i) => (
-                                            <div key={i} className="flex justify-between items-start gap-2">
-                                                <span className="flex-1">{item.cantidad}x {item.producto}</span>
-                                                <span className="font-bold">{(item.precio_venta_cop * item.cantidad).toLocaleString()}</span>
+                                            <div key={i}>
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <span className="flex-1 font-bold">{item.cantidad}x {item.producto}</span>
+                                                    <span className="font-bold">{(item.precio_venta_cop * item.cantidad).toLocaleString()}</span>
+                                                </div>
+                                                {/* IMPRESIÓN DE LA NOTA DEL COCINERO */}
+                                                {item.nota_ensamblaje && (
+                                                    <div className="text-[10px] pl-4 italic pr-2 mt-1 leading-tight text-gray-700">
+                                                        {item.nota_ensamblaje}
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
