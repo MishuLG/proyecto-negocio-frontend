@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    LineChart, Line, AreaChart, Area
+} from 'recharts';
 
 // --- FUNCIONES MAESTRAS DE FECHA ---
 // Extrae la fecha local del cajero evitando desfases de Zona Horaria (UTC-4)
@@ -34,27 +38,28 @@ const esMismaSemana = (fechaLimpia) => {
 export default function Gastos() {
     const navigate = useNavigate();
     const [gastos, setGastos] = useState([]);
+    const [ventas, setVentas] = useState([]);
     const [nuevoGasto, setNuevoGasto] = useState({ concepto: '', monto_cop: '', fecha: getHoyStr() });
 
     // Filtros de la tabla interactiva
     const [filtroTabla, setFiltroTabla] = useState('Todos');
 
     const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') === 'dark');
-    const [totales, setTotales] = useState({ diario: 0, semanal: 0, mensual: 0, anual: 0 });
 
-    const cargarGastos = async () => {
+    const cargarDatos = async () => {
         try {
-            const res = await fetch('http://localhost:3000/api/gastos');
-            if (res.ok) {
-                const data = await res.json();
-                setGastos(data);
-            }
+            const [resGastos, resVentas] = await Promise.all([
+                fetch('http://localhost:3000/api/gastos'),
+                fetch('http://localhost:3000/api/ventas/todas')
+            ]);
+            if (resGastos.ok) setGastos(await resGastos.json());
+            if (resVentas.ok) setVentas(await resVentas.json());
         } catch (error) {
-            console.error("Error conectando con la API de gastos", error);
+            console.error("Error conectando con la API de gastos y ventas", error);
         }
     };
 
-    useEffect(() => { cargarGastos(); }, []);
+    useEffect(() => { cargarDatos(); }, []);
 
     useEffect(() => {
         localStorage.setItem('theme', isDark ? 'dark' : 'light');
@@ -62,32 +67,61 @@ export default function Gastos() {
         else document.documentElement.classList.remove('dark');
     }, [isDark]);
 
-    // Motor Recalculador de Totales a prueba de balas
-    useEffect(() => {
-        let tDiario = 0, tSemanal = 0, tMensual = 0, tAnual = 0;
-        const hoyStr = getHoyStr();
-        const mesHoy = hoyStr.substring(0, 7); // "2026-04"
-        const anoHoy = hoyStr.substring(0, 4); // "2026"
+    // --- MOTOR DE CÁLCULOS DE INTELIGENCIA ---
+    const analitica = useMemo(() => {
+        const hoy = getHoyStr();
+        const mesActual = hoy.substring(0, 7);
+        const añoActual = hoy.substring(0, 4);
 
-        gastos.forEach(gasto => {
-            const monto = parseFloat(gasto.monto_cop);
-            // Si viene de postgres puede traer "T00:00:00.000Z", cortamos solo la fecha
-            const fechaLimpia = (gasto.fecha || "").split('T')[0];
+        let resumen = {
+            vHoy: 0, gHoy: 0,
+            vSemana: 0, gSemana: 0,
+            vMes: 0, gMes: 0,
+            vAño: 0, gAño: 0
+        };
 
-            if (!fechaLimpia) return;
-
-            // Diario exacto
-            if (fechaLimpia === hoyStr) tDiario += monto;
-            // Semanal exacto
-            if (esMismaSemana(fechaLimpia)) tSemanal += monto;
-            // Mensual exacto
-            if (fechaLimpia.startsWith(mesHoy)) tMensual += monto;
-            // Anual exacto
-            if (fechaLimpia.startsWith(anoHoy)) tAnual += monto;
+        // Procesar Ventas para los Totales
+        ventas.forEach(v => {
+            const f = v.fecha_hora.split('T')[0];
+            const m = parseFloat(v.total_cop);
+            if (f === hoy) resumen.vHoy += m;
+            if (esMismaSemana(f)) resumen.vSemana += m;
+            if (f.startsWith(mesActual)) resumen.vMes += m;
+            if (f.startsWith(añoActual)) resumen.vAño += m;
         });
 
-        setTotales({ diario: tDiario, semanal: tSemanal, mensual: tMensual, anual: tAnual });
-    }, [gastos]);
+        // Procesar Gastos para los Totales
+        gastos.forEach(g => {
+            const f = (g.fecha || "").split('T')[0];
+            if (!f) return;
+            const m = parseFloat(g.monto_cop);
+            if (f === hoy) resumen.gHoy += m;
+            if (esMismaSemana(f)) resumen.gSemana += m;
+            if (f.startsWith(mesActual)) resumen.gMes += m;
+            if (f.startsWith(añoActual)) resumen.gAño += m;
+        });
+
+        // Generar datos para las Gráficas (Agrupados por fecha de más antiguo a más reciente)
+        const historialMap = {};
+        ventas.forEach(v => {
+            const f = v.fecha_hora.split('T')[0];
+            if (!historialMap[f]) historialMap[f] = { fecha: f, ingresos: 0, gastos: 0, ganancia: 0 };
+            historialMap[f].ingresos += parseFloat(v.total_cop);
+        });
+        gastos.forEach(g => {
+            const f = (g.fecha || "").split('T')[0];
+            if (!f) return;
+            if (!historialMap[f]) historialMap[f] = { fecha: f, ingresos: 0, gastos: 0, ganancia: 0 };
+            historialMap[f].gastos += parseFloat(g.monto_cop);
+        });
+
+        const chartData = Object.values(historialMap)
+            .sort((a, b) => new Date(a.fecha) - new Date(b.fecha))
+            .map(d => ({ ...d, ganancia: d.ingresos - d.gastos }))
+            .slice(-15); // Tomamos solo los últimos 15 días con movimientos para las gráficas
+
+        return { resumen, chartData };
+    }, [gastos, ventas]);
 
     const registrarGasto = async (e) => {
         e.preventDefault();
@@ -105,7 +139,7 @@ export default function Gastos() {
                     fecha: nuevoGasto.fecha
                 })
             });
-            cargarGastos();
+            cargarDatos();
             setNuevoGasto({ concepto: '', monto_cop: '', fecha: getHoyStr() });
             alert("✅ Gasto registrado con éxito.");
         } catch (error) {
@@ -114,13 +148,13 @@ export default function Gastos() {
     };
 
     const eliminarGasto = async (id) => {
-        if (window.confirm("¿Estás seguro de eliminar este gasto? Esto afectará los totales calculados.")) {
+        if (window.confirm("¿Estás seguro de eliminar este gasto? Esto afectará los cálculos de ganancias y gráficas al instante.")) {
             await fetch(`http://localhost:3000/api/gastos/${id}`, { method: 'DELETE' });
-            cargarGastos();
+            cargarDatos();
         }
     };
 
-    // Aplicar Filtro Visual a la Tabla
+    // Aplicar Filtro Visual a la Tabla Inferior
     const gastosFiltrados = gastos.filter(gasto => {
         const fechaLimpia = (gasto.fecha || "").split('T')[0];
         const hoyStr = getHoyStr();
@@ -140,7 +174,7 @@ export default function Gastos() {
                 <motion.div initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="flex justify-between items-center mb-10 bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors">
                     <div className="flex items-center gap-4">
                         <Link to="/dashboard" className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-800 dark:text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">⬅ Volver al Panel</Link>
-                        <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">📉 Control de Gastos</h1>
+                        <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">📉 Inteligencia de Negocios y Gastos</h1>
                     </div>
                     <div className="flex gap-4">
                         <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setIsDark(!isDark)} className="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-white px-4 py-3 rounded-xl font-bold transition-colors">
@@ -150,23 +184,91 @@ export default function Gastos() {
                     </div>
                 </motion.div>
 
-                {/* TARJETAS DE MÉTRICAS */}
+                {/* TARJETAS DE GANANCIA REAL (Ventas - Gastos) */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    {[
-                        { titulo: "Gasto de Hoy", valor: totales.diario, color: "text-amber-500", bg: "bg-amber-50 dark:bg-amber-900/20" },
-                        { titulo: "Esta Semana", valor: totales.semanal, color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-900/20" },
-                        { titulo: "Este Mes", valor: totales.mensual, color: "text-red-500", bg: "bg-red-50 dark:bg-red-900/20" },
-                        { titulo: "Gasto Anual", valor: totales.anual, color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-900/20" }
-                    ].map((card, index) => (
-                        <motion.div key={index} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: index * 0.1 }} className={`p-6 rounded-3xl border border-slate-200 dark:border-slate-700 ${card.bg} transition-colors`}>
-                            <h3 className="text-slate-500 dark:text-slate-400 font-bold text-sm uppercase tracking-wider">{card.titulo}</h3>
-                            <p className={`text-3xl font-black mt-2 ${card.color}`}>${card.valor.toLocaleString('es-CO')}</p>
-                        </motion.div>
-                    ))}
+                    <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-6 rounded-3xl text-white shadow-lg">
+                        <h3 className="font-bold opacity-80 uppercase text-xs">Ganancia Neta (Hoy)</h3>
+                        <p className="text-3xl font-black mt-1">${(analitica.resumen.vHoy - analitica.resumen.gHoy).toLocaleString()}</p>
+                        <p className="text-[10px] mt-2 font-medium opacity-90">Ingresos: ${analitica.resumen.vHoy.toLocaleString()} | Egresos: ${analitica.resumen.gHoy.toLocaleString()}</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-orange-400 to-orange-600 p-6 rounded-3xl text-white shadow-lg">
+                        <h3 className="font-bold opacity-80 uppercase text-xs">Ganancia Neta (Semana)</h3>
+                        <p className="text-3xl font-black mt-1">${(analitica.resumen.vSemana - analitica.resumen.gSemana).toLocaleString()}</p>
+                        <p className="text-[10px] mt-2 font-medium opacity-90">Ingresos: ${analitica.resumen.vSemana.toLocaleString()} | Egresos: ${analitica.resumen.gSemana.toLocaleString()}</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-blue-500 to-indigo-600 p-6 rounded-3xl text-white shadow-lg">
+                        <h3 className="font-bold opacity-80 uppercase text-xs">Utilidad (Mes Actual)</h3>
+                        <p className="text-3xl font-black mt-1">${(analitica.resumen.vMes - analitica.resumen.gMes).toLocaleString()}</p>
+                        <p className="text-[10px] mt-2 font-medium opacity-90">Ingresos: ${analitica.resumen.vMes.toLocaleString()} | Egresos: ${analitica.resumen.gMes.toLocaleString()}</p>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-500 to-pink-600 p-6 rounded-3xl text-white shadow-lg">
+                        <h3 className="font-bold opacity-80 uppercase text-xs">Rendimiento (Año)</h3>
+                        <p className="text-3xl font-black mt-1">${(analitica.resumen.vAño - analitica.resumen.gAño).toLocaleString()}</p>
+                        <p className="text-[10px] mt-2 font-medium opacity-90">Ingresos: ${analitica.resumen.vAño.toLocaleString()} | Egresos: ${analitica.resumen.gAño.toLocaleString()}</p>
+                    </div>
+                </div>
+
+                {/* SECCIÓN DE GRÁFICAS */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                    {/* Gráfica 1: Ingresos vs Gastos Diarios */}
+                    <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors">
+                        <h3 className="font-bold mb-4 text-slate-800 dark:text-white">Movimiento Diario (Ventas vs Gastos)</h3>
+                        <div className="h-[300px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={analitica.chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" opacity={0.2} />
+                                    <XAxis dataKey="fecha" tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <Tooltip contentStyle={{ borderRadius: '15px', backgroundColor: '#1e293b', color: '#fff', border: 'none' }} />
+                                    <Legend />
+                                    <Bar dataKey="ingresos" name="Ventas" fill="#10b981" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="gastos" name="Gastos" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    {/* Gráfica 2: Tendencia de Ganancia Neta */}
+                    <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors">
+                        <h3 className="font-bold mb-4 text-slate-800 dark:text-white">Flujo de Ganancia Neta</h3>
+                        <div className="h-[300px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={analitica.chartData}>
+                                    <defs>
+                                        <linearGradient id="colorGanancia" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
+                                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" opacity={0.2} />
+                                    <XAxis dataKey="fecha" tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <Tooltip contentStyle={{ borderRadius: '15px', backgroundColor: '#1e293b', color: '#fff', border: 'none' }} />
+                                    <Area type="monotone" dataKey="ganancia" name="Utilidad Neta" stroke="#6366f1" fillOpacity={1} fill="url(#colorGanancia)" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    {/* Gráfica 3: Crecimiento y Tendencia de Ventas */}
+                    <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 lg:col-span-2 transition-colors">
+                        <h3 className="font-bold mb-4 text-slate-800 dark:text-white">Análisis de Crecimiento en Ventas</h3>
+                        <div className="h-[300px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={analitica.chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" opacity={0.2} />
+                                    <XAxis dataKey="fecha" tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
+                                    <Tooltip contentStyle={{ borderRadius: '15px', backgroundColor: '#1e293b', color: '#fff', border: 'none' }} />
+                                    <Line type="stepAfter" dataKey="ingresos" name="Ventas Brutas" stroke="#f59e0b" strokeWidth={3} dot={{ r: 6 }} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    {/* FORMULARIO */}
+                    {/* FORMULARIO DE GASTOS */}
                     <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="lg:col-span-1 bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 h-fit transition-colors">
                         <h2 className="text-xl font-bold mb-6 text-slate-800 dark:text-white">🛒 Registrar Nuevo Gasto</h2>
                         <form onSubmit={registrarGasto} className="space-y-4">
@@ -188,12 +290,12 @@ export default function Gastos() {
                         </form>
                     </motion.div>
 
-                    {/* TABLA DE GASTOS Y FILTROS */}
+                    {/* TABLA DE GASTOS Y FILTROS RESTAURADOS */}
                     <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="lg:col-span-2 bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 transition-colors flex flex-col h-full max-h-[600px]">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-slate-800 dark:text-white">🧾 Historial de Compras</h2>
 
-                            {/* Píldoras de Filtro */}
+                            {/* Píldoras de Filtro (Restauradas) */}
                             <div className="flex gap-2">
                                 {['Todos', 'Hoy', 'Semana', 'Mes', 'Año'].map(f => (
                                     <button
@@ -240,6 +342,7 @@ export default function Gastos() {
                                                         <td className="p-4 font-bold text-slate-800 dark:text-slate-200">{gasto.concepto}</td>
                                                         <td className="p-4 font-black text-red-500 dark:text-red-400">-{parseFloat(gasto.monto_cop).toLocaleString('es-CO')}</td>
                                                         <td className="p-4 text-center">
+                                                            {/* Botón de borrar restaurado */}
                                                             <button onClick={() => eliminarGasto(gasto.id)} className="bg-red-50 dark:bg-red-900/30 text-red-500 px-3 py-2 rounded-lg font-bold text-xs hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors">🗑️ Borrar</button>
                                                         </td>
                                                     </motion.tr>
